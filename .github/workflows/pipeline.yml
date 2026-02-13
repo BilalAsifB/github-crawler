@@ -54,7 +54,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DATABASE_URL: postgresql+asyncpg://postgres:postgres_password@localhost:5432/github_crawler
         run: |
-          uv run python src/main.py
+          uv run python -m src.main
 
       - name: Dump database contents
         env:
