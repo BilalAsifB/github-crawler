@@ -41,7 +41,7 @@ class GitHubGraphQLClient:
     def __init__(self, token: str):
         self.headers = {
             "Authorization": f"Bearer {token}"
-        },
+        }
         self.api_url = "https://api.github.com/graphql"
 
     async def fetch_page(self, session: aiohttp.ClientSession, cursor: str = None) -> Tuple[List[Dict], str, bool]:

@@ -1,7 +1,7 @@
 from typing import List
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import Table, Column, String, Integer, DateTime, MetaData, text
+from sqlalchemy import Table, Column, String, Integer, DateTime, MetaData
 from src.domain.models import RepositoryEntity
 
 # SQLAlchemy core Table definition
@@ -46,12 +46,12 @@ class PostgresRepository:
         async with self.engine.begin() as conn:
             stmt = insert(repos_table).values(values)
 
-            # Only update if the incoming star count is different from the existing one.  
+            # Only update if the incoming stars or updated_at are different from the existing ones.
             upsert_stmt = stmt.on_conflict_do_update(
                 index_elements=['id'],
                 set_={
                     'stars': stmt.excluded.stars,
-                    'updated_at': text('NOW()'),
+                    'updated_at': stmt.excluded.updated_at,
                 },
                 where=(repos_table.c.stars.is_distinct_from(stmt.excluded.stars) | repos_table.c.updated_at.is_distinct_from(stmt.excluded.updated_at))
             )

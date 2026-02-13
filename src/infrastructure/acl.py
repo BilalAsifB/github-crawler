@@ -21,10 +21,12 @@ class GitHubTranslator:
         
         # Extract nested fields with safe defaults
         owner_data = raw_node.get('owner', {})
-        stargazers_data = raw_node.get('stargrazers', {})
+        stargazers_data = raw_node.get('stargazers', {})
 
-        raw_date = raw_node.get('updatedAt', '')
-        updated_at_dt = datetime.fromisoformat(raw_date) if raw_date else None
+        raw_date = raw_node.get('updatedAt')
+        if not raw_date:
+            raise ValueError("updatedAt is required to build RepositoryEntity.")
+        updated_at_dt = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
 
         return RepositoryEntity(
             id=raw_node.get('id', ''),
