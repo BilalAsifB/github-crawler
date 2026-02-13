@@ -2,7 +2,7 @@ from typing import List
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import Table, Column, String, Integer, DateTime, MetaData
-from domain.models import RepositoryEntity
+from src.domain.models import RepositoryEntity
 
 # SQLAlchemy core Table definition
 metadata = MetaData()

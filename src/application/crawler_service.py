@@ -3,10 +3,10 @@ import logging
 from datetime import datetime, timezone
 import aiohttp
 
-from infrastructure.github_client import GitHubGraphQLClient
-from infrastructure.acl import GitHubTranslator
-from infrastructure.database import PostgresRepository
-from domain.exceptions import RateLimitExceededException
+from src.infrastructure.github_client import GitHubGraphQLClient
+from src.infrastructure.acl import GitHubTranslator
+from src.infrastructure.database import PostgresRepository
+from src.domain.exceptions import RateLimitExceededException
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +46,11 @@ class CrawlerService:
                         logger.warning("No more repositories found. Ending crawl.")
                         break
                     
+                    remaining = self.target_count - total_fetched
+                    nodes_to_process = raw_nodes[:remaining]
+
                     # Translate raw data to domain entities and batch insert into the database
-                    entities = [GitHubTranslator.to_domain(node) for node in raw_nodes if node]
+                    entities = [GitHubTranslator.to_domain(node) for node in nodes_to_process if node]
                     await self.db_repository.bulk_upsert(entities)
 
                     batch_size = len(entities)
@@ -55,6 +58,10 @@ class CrawlerService:
                     cursor = next_cursor
 
                     logger.info(f"Fetched {batch_size} repositories. Total so far: {total_fetched}/{self.target_count}.")
+
+                    if total_fetched >= self.target_count:
+                        logger.info("Target repository count reached. Ending crawl.")
+                        break
 
                     if not has_next_page:
                         logger.info("Reached the end of available pages. Ending crawl.")

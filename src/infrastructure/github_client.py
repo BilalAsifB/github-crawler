@@ -2,7 +2,7 @@ import aiohttp
 import asyncio
 import logging
 from typing import Dict, Any, Tuple, List
-from domain.exceptions import RateLimitExceededException
+from src.domain.exceptions import RateLimitExceededException
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,10 @@ class GitHubGraphQLClient:
 
     def __init__(self, token: str):
         self.headers = {
-            "Authorization": f"Bearer {token}"
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "github-crawler-sofstica",
+            "X-GitHub-Api-Version": "2022-11-28",
         }
         self.api_url = "https://api.github.com/graphql"
 
