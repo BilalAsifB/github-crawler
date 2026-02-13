@@ -3,10 +3,10 @@ import logging
 from datetime import datetime, timezone
 import aiohttp
 
-from src.infrastructure.github_client import GitHubGraphQLClient
-from src.infrastructure.acl import GitHubTranslator
-from src.infrastructure.database import PostgresRepository
-from src.domain.exceptions import RateLimitExceededException
+from infrastructure.github_client import GitHubGraphQLClient
+from infrastructure.acl import GitHubTranslator
+from infrastructure.database import PostgresRepository
+from domain.exceptions import RateLimitExceededException
 
 logger = logging.getLogger(__name__)
 
