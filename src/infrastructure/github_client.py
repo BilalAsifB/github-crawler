@@ -1,6 +1,7 @@
 import aiohttp
 import asyncio
 import logging
+import random
 from typing import Dict, Any, Tuple, List
 
 from src.domain.exceptions import RateLimitExceededException
@@ -40,8 +41,10 @@ query ($cursor: String, $searchQuery: String!, $pageSize: Int!) {
 }
 """
 
-DEFAULT_PAGE_SIZE = 50
-REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
+DEFAULT_PAGE_SIZE = 25
+MIN_PAGE_SIZE = 5
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=60, connect=10)
+MAX_RETRIES = 7
 
 class GitHubGraphQLClient:
     """
@@ -71,13 +74,13 @@ class GitHubGraphQLClient:
         Returns:
             Tuple of (nodes, end_cursor, has_next_page, repository_count).
         """
-        payload = {
-            "query": GRAPHQL_QUERY,
-            "variables": {"cursor": cursor, "searchQuery": search_query, "pageSize": page_size},
-        }
-        max_retries = 5
+        current_page_size = page_size
 
-        for attempt in range(max_retries):
+        for attempt in range(MAX_RETRIES):
+          payload = {
+              "query": GRAPHQL_QUERY,
+              "variables": {"cursor": cursor, "searchQuery": search_query, "pageSize": current_page_size},
+          }
           try:
             async with session.post(self.api_url, json=payload, headers=self.headers, timeout=REQUEST_TIMEOUT) as response:
                 # Handle secondary rate limit (abuse detection)
@@ -89,8 +92,14 @@ class GitHubGraphQLClient:
                   continue
 
                 if response.status in {500, 502, 503, 504}:
-                  sleep_time = 2 ** attempt
-                  logger.warning(f"Server error (status {response.status}). Retrying in {sleep_time}s...")
+                  # Reduce page size on server errors — large pages cause GitHub timeouts
+                  current_page_size = max(current_page_size // 2, MIN_PAGE_SIZE)
+                  sleep_time = (2 ** attempt) + random.uniform(0, 2)
+                  logger.warning(
+                      f"Server error ({response.status}). "
+                      f"Reducing page size to {current_page_size}, "
+                      f"retrying in {sleep_time:.1f}s (attempt {attempt + 1}/{MAX_RETRIES})..."
+                  )
                   await asyncio.sleep(sleep_time)
                   continue
 
@@ -101,8 +110,9 @@ class GitHubGraphQLClient:
                 if 'errors' in data:
                     error_msg = data['errors'][0].get('message', 'Unknown GraphQL error')
                     if 'data' not in data or data['data'] is None:
-                        sleep_time = 2 ** attempt
-                        logger.warning(f"GraphQL error: {error_msg}. Retrying in {sleep_time}s...")
+                        current_page_size = max(current_page_size // 2, MIN_PAGE_SIZE)
+                        sleep_time = (2 ** attempt) + random.uniform(0, 2)
+                        logger.warning(f"GraphQL error: {error_msg}. Retrying in {sleep_time:.1f}s...")
                         await asyncio.sleep(sleep_time)
                         continue
                     logger.warning(f"GraphQL partial error: {error_msg}")
@@ -121,9 +131,13 @@ class GitHubGraphQLClient:
 
                 return nodes, page_info.get('endCursor'), page_info.get('hasNextPage', False), repo_count
 
-          except aiohttp.ClientError as e:
-              sleep_time = 2 ** attempt
-              logger.warning(f"HTTP error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {sleep_time}s...")
+          except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+              current_page_size = max(current_page_size // 2, MIN_PAGE_SIZE)
+              sleep_time = (2 ** attempt) + random.uniform(0, 2)
+              logger.warning(
+                  f"Request failed (attempt {attempt + 1}/{MAX_RETRIES}): {e}. "
+                  f"Reducing page size to {current_page_size}, retrying in {sleep_time:.1f}s..."
+              )
               await asyncio.sleep(sleep_time)
 
-        raise Exception(f"Failed to fetch page after {max_retries} attempts.")
+        raise Exception(f"Failed to fetch page after {MAX_RETRIES} attempts.")

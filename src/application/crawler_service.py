@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
 MAX_SEARCH_RESULTS = 1_000
 INITIAL_MIN_STARS = 10
 INITIAL_MAX_STARS = 1_000_000
-INTER_REQUEST_DELAY = 0.5
+INTER_REQUEST_DELAY = 2.0  # Seconds between requests to avoid secondary rate limits
 MAX_CONSECUTIVE_ERRORS = 5
+# Limit concurrent connections to avoid overwhelming GitHub's servers
+CONNECTOR_LIMIT = 5
 
 
 class CrawlerService:
@@ -52,7 +54,9 @@ class CrawlerService:
 
         logger.info(f"Starting crawl to fetch up to {self.target_count} repositories.")
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(limit=CONNECTOR_LIMIT),
+        ) as session:
             while ranges and total_fetched < self.target_count:
                 min_stars, max_stars = ranges.popleft()
                 search_query = self._build_search_query(min_stars, max_stars)
@@ -131,7 +135,8 @@ class CrawlerService:
                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                     logger.error(f"Too many consecutive errors for '{search_query}'. Skipping range.")
                     break
-                logger.error(f"Error in '{search_query}': {e}. Retrying ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS})...")
-                await asyncio.sleep(5 * consecutive_errors)
+                wait = 10 * consecutive_errors
+                logger.error(f"Error in '{search_query}': {e}. Retrying in {wait}s ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS})...")
+                await asyncio.sleep(wait)
 
         return total_fetched
