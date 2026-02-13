@@ -1,6 +1,6 @@
 import aiohttp
 from typing import Dict, Any, Tuple, List
-from src.domain.exceptions import RateLimitExceededException
+from domain.exceptions import RateLimitExceededException
 
 # The GraphQL query to fetch repositories with pagination
 GRAPHQL_QUERY = """
