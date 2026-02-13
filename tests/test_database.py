@@ -56,4 +56,24 @@ class TestPostgresRepository(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(conn.executed)
         sql = str(conn.executed.compile(dialect=postgresql.dialect())).lower()
         self.assertIn("excluded.updated_at", sql)
-        self.assertNotIn("now()", sql)
+
+    async def test_bulk_upsert_sets_crawled_at_to_now(self) -> None:
+        conn = _DummyConn()
+        engine = _DummyEngine(conn)
+
+        with patch("src.infrastructure.database.create_async_engine", return_value=engine):
+            repo = PostgresRepository("postgresql+asyncpg://user:pass@localhost/db")
+
+        entity = RepositoryEntity(
+            id="repo-1",
+            name="example",
+            owner="octocat",
+            stars=10,
+            updated_at=datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+        )
+
+        await repo.bulk_upsert([entity])
+
+        self.assertIsNotNone(conn.executed)
+        sql = str(conn.executed.compile(dialect=postgresql.dialect())).lower()
+        self.assertIn("now()", sql)

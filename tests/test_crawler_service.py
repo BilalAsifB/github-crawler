@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from src.application.crawler_service import CrawlerService
+from src.application.crawler_service import CrawlerService, INITIAL_MIN_STARS
 
 
 class _FakeGitHubClient:
@@ -84,7 +84,7 @@ class TestCrawlerService(unittest.IsolatedAsyncioTestCase):
 
             async def fetch_page(self, session, cursor=None, search_query="", page_size=50):
                 self.queries.append(search_query)
-                if search_query == "stars:1000..1000000":
+                if search_query == "stars:10..1000000":
                     return [], None, False, 5000  # >1000 → triggers split
                 return [node] * 5, None, False, 5
 
@@ -104,7 +104,11 @@ class TestCrawlerService(unittest.IsolatedAsyncioTestCase):
             await service.crawl()
 
         # First call is the full range, then two sub-ranges after the split
-        self.assertEqual(client.queries[0], "stars:1000..1000000")
-        self.assertEqual(client.queries[1], "stars:1000..500500")
-        self.assertEqual(client.queries[2], "stars:500501..1000000")
+        self.assertEqual(client.queries[0], "stars:10..1000000")
+        self.assertEqual(client.queries[1], "stars:10..500005")
+        self.assertEqual(client.queries[2], "stars:500006..1000000")
         self.assertEqual(db_repository.total_entities, 10)
+
+    async def test_initial_star_range_starts_at_ten(self) -> None:
+        """The crawler starts at 10 stars to ensure enough repos for 100K target."""
+        self.assertEqual(INITIAL_MIN_STARS, 10)

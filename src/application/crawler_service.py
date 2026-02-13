@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 # GitHub GraphQL search returns at most 1,000 results per query
 MAX_SEARCH_RESULTS = 1_000
+INITIAL_MIN_STARS = 10
 INITIAL_MAX_STARS = 1_000_000
 INTER_REQUEST_DELAY = 0.5
 MAX_CONSECUTIVE_ERRORS = 5
@@ -47,7 +48,7 @@ class CrawlerService:
         ranges of ≤1,000 results each, bypassing the GitHub search API cap.
         """
         total_fetched = 0
-        ranges: deque[tuple[int, int]] = deque([(1000, INITIAL_MAX_STARS)])
+        ranges: deque[tuple[int, int]] = deque([(INITIAL_MIN_STARS, INITIAL_MAX_STARS)])
 
         logger.info(f"Starting crawl to fetch up to {self.target_count} repositories.")
 

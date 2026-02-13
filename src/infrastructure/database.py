@@ -1,7 +1,7 @@
 from typing import List
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import Table, Column, String, Integer, DateTime, MetaData
+from sqlalchemy.dialects.postgresql import insert, JSONB
+from sqlalchemy import Table, Column, String, Integer, DateTime, MetaData, text
 
 from src.domain.models import RepositoryEntity
 
@@ -14,6 +14,8 @@ repos_table = Table(
     Column('owner', String, nullable=False),
     Column('stars', Integer, nullable=False),
     Column('updated_at', DateTime(timezone=True), nullable=False),
+    Column('crawled_at', DateTime(timezone=True), server_default=text('NOW()')),
+    Column('metadata', JSONB, server_default=text("'{}'::jsonb")),
 )
 
 class PostgresRepository:
@@ -53,6 +55,7 @@ class PostgresRepository:
                 set_={
                     'stars': stmt.excluded.stars,
                     'updated_at': stmt.excluded.updated_at,
+                    'crawled_at': text('NOW()'),
                 },
                 where=(repos_table.c.stars.is_distinct_from(stmt.excluded.stars) | repos_table.c.updated_at.is_distinct_from(stmt.excluded.updated_at))
             )

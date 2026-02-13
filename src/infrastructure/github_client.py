@@ -3,7 +3,7 @@ import asyncio
 import logging
 from typing import Dict, Any, Tuple, List
 
-from src.domain.models import RepositoryEntity
+from src.domain.exceptions import RateLimitExceededException
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,14 @@ class GitHubGraphQLClient:
         for attempt in range(max_retries):
           try:
             async with session.post(self.api_url, json=payload, headers=self.headers, timeout=REQUEST_TIMEOUT) as response:
+                # Handle secondary rate limit (abuse detection)
+                if response.status == 403:
+                  retry_after = response.headers.get('Retry-After')
+                  sleep_time = int(retry_after) if retry_after else 60
+                  logger.warning(f"Secondary rate limit (403). Sleeping {sleep_time}s...")
+                  await asyncio.sleep(sleep_time)
+                  continue
+
                 if response.status in {500, 502, 503, 504}:
                   sleep_time = 2 ** attempt
                   logger.warning(f"Server error (status {response.status}). Retrying in {sleep_time}s...")

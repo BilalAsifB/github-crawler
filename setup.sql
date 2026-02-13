@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS github_repositories (
     owner VARCHAR NOT NULL,
     stars INTEGER NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    crawled_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,  -- Tracks when last refreshed
     metadata JSONB DEFAULT '{}'::jsonb  -- Flexible column for future metadata
 );
 
