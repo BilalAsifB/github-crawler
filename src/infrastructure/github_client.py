@@ -2,7 +2,7 @@ import aiohttp
 import asyncio
 import logging
 from typing import Dict, Any, Tuple, List
-from src.domain.exceptions import RateLimitExceededException
+from domain.exceptions import RateLimitExceededException
 
 logger = logging.getLogger(__name__)
 
