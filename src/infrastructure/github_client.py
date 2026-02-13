@@ -2,14 +2,17 @@ import aiohttp
 import asyncio
 import logging
 from typing import Dict, Any, Tuple, List
-from domain.exceptions import RateLimitExceededException
+from src.domain.exceptions import RateLimitExceededException
 
 logger = logging.getLogger(__name__)
 
-# The GraphQL query to fetch repositories with pagination
+# The GraphQL query to fetch repositories with pagination.
+# search_query and page_size are parameterised so the crawler can partition
+# the star-count space and avoid the 1,000-result-per-query cap.
 GRAPHQL_QUERY = """
-query ($cursor: String) {
-  search(query: "stars:>1000", type: REPOSITORY, first: 100, after: $cursor) {
+query ($cursor: String, $searchQuery: String!, $pageSize: Int!) {
+  search(query: $searchQuery, type: REPOSITORY, first: $pageSize, after: $cursor) {
+    repositoryCount
     pageInfo {
       endCursor
       hasNextPage
@@ -36,6 +39,9 @@ query ($cursor: String) {
 }
 """
 
+DEFAULT_PAGE_SIZE = 50
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
 class GitHubGraphQLClient:
     """
     Client for interacting with the GitHub GraphQL API.
@@ -51,59 +57,64 @@ class GitHubGraphQLClient:
         }
         self.api_url = "https://api.github.com/graphql"
 
-    async def fetch_page(self, session: aiohttp.ClientSession, cursor: str = None) -> Tuple[List[Dict], str, bool]:
+    async def fetch_page(
+        self,
+        session: aiohttp.ClientSession,
+        cursor: str = None,
+        search_query: str = "stars:>=1000",
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> Tuple[List[Dict], str, bool, int]:
         """
         Fetches a single page of repositories from GitHub.
-        
-        Args:
-            session (aiohttp.ClientSession): The HTTP session to use for the request.
-            cursor (str, optional): The pagination cursor for fetching the next page. Defaults to None.
-        
-        Returns:
-            Tuple[List[Dict], str, bool]: A tuple containing the list of repository nodes, the next cursor, and a boolean indicating if there are more pages.
-        """
 
+        Returns:
+            Tuple of (nodes, end_cursor, has_next_page, repository_count).
+        """
         payload = {
             "query": GRAPHQL_QUERY,
-            "variables": {"cursor": cursor}
+            "variables": {"cursor": cursor, "searchQuery": search_query, "pageSize": page_size},
         }
         max_retries = 5
 
         for attempt in range(max_retries):
           try:
-            async with session.post(self.api_url, json=payload, headers=self.headers) as response:
-                # Handle standard HTTP errors
+            async with session.post(self.api_url, json=payload, headers=self.headers, timeout=REQUEST_TIMEOUT) as response:
                 if response.status in {500, 502, 503, 504}:
-                  sleep_time = 2 ** attempt  # Exponential backoff
-                  logger.warning(f"Server error (status {response.status}). Retrying in {sleep_time} seconds...")
+                  sleep_time = 2 ** attempt
+                  logger.warning(f"Server error (status {response.status}). Retrying in {sleep_time}s...")
                   await asyncio.sleep(sleep_time)
-                  continue  # Retry the request
-                
-                response.raise_for_status()  # Raise an exception for non-200 responses
+                  continue
 
+                response.raise_for_status()
                 data = await response.json()
 
-                # Enforce rate limits
-                rate_limit = data.get('data', {}).get('rateLimit', {})
-                remaning = rate_limit.get('remaining', 100)
+                # Handle GraphQL-level errors (can occur even with HTTP 200)
+                if 'errors' in data:
+                    error_msg = data['errors'][0].get('message', 'Unknown GraphQL error')
+                    if 'data' not in data or data['data'] is None:
+                        sleep_time = 2 ** attempt
+                        logger.warning(f"GraphQL error: {error_msg}. Retrying in {sleep_time}s...")
+                        await asyncio.sleep(sleep_time)
+                        continue
+                    logger.warning(f"GraphQL partial error: {error_msg}")
 
-                if remaning < 10: # Threshold to prevent hitting the limit
+                rate_limit = data.get('data', {}).get('rateLimit', {})
+                remaining = rate_limit.get('remaining', 100)
+
+                if remaining < 10:
                     reset_at = rate_limit.get('resetAt')
                     raise RateLimitExceededException(reset_at=reset_at)
-                
-                # Extract repositories and pagination info
+
                 search_data = data.get('data', {}).get('search', {})
                 nodes = search_data.get('nodes', [])
                 page_info = search_data.get('pageInfo', {})
+                repo_count = search_data.get('repositoryCount', 0)
 
-                end_cursor = page_info.get('endCursor')
-                has_next_page = page_info.get('hasNextPage', False)
+                return nodes, page_info.get('endCursor'), page_info.get('hasNextPage', False), repo_count
 
-                return nodes, end_cursor, has_next_page
-            
           except aiohttp.ClientError as e:
-              sleep_time = 2 ** attempt  # Exponential backoff
-              logger.warning(f"HTTP request failed (attempt {attempt + 1}/{max_retries}): {str(e)}. Retrying in {sleep_time} seconds...")
-              await asyncio.sleep(sleep_time)  # Wait before retrying
-              
+              sleep_time = 2 ** attempt
+              logger.warning(f"HTTP error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {sleep_time}s...")
+              await asyncio.sleep(sleep_time)
+
         raise Exception(f"Failed to fetch page after {max_retries} attempts.")
