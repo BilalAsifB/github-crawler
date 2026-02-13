@@ -2,7 +2,8 @@ import aiohttp
 import asyncio
 import logging
 from typing import Dict, Any, Tuple, List
-from src.domain.exceptions import RateLimitExceededException
+
+from src.domain.models import RepositoryEntity
 
 logger = logging.getLogger(__name__)
 

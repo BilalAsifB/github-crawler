@@ -4,9 +4,9 @@ import sys
 import logging
 from dotenv import load_dotenv
 
-from src.infrastructure.github_client import GitHubGraphQLClient
-from src.infrastructure.database import PostgresRepository
-from src.application.crawler_service import CrawlerService
+from infrastructure.github_client import GitHubGraphQLClient
+from infrastructure.database import PostgresRepository
+from application.crawler_service import CrawlerService
 
 # Configure logging
 logging.basicConfig(

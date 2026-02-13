@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any, Dict
+
 from src.domain.models import RepositoryEntity
 
 class GitHubTranslator:
