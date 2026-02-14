@@ -41,8 +41,8 @@ query ($cursor: String, $searchQuery: String!, $pageSize: Int!) {
 }
 """
 
-DEFAULT_PAGE_SIZE = 100
-MIN_PAGE_SIZE = 10
+DEFAULT_PAGE_SIZE = 50
+MIN_PAGE_SIZE = 5
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=60, connect=10)
 MAX_RETRIES = 7
 
