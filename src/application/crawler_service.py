@@ -15,10 +15,12 @@ logger = logging.getLogger(__name__)
 MAX_SEARCH_RESULTS = 1_000
 INITIAL_MIN_STARS = 10
 INITIAL_MAX_STARS = 1_000_000
-INTER_REQUEST_DELAY = 1.0  # Seconds between requests to avoid secondary rate limits
+INTER_REQUEST_DELAY = 0.5  # Seconds between requests to avoid secondary rate limits
 MAX_CONSECUTIVE_ERRORS = 5
 # Limit concurrent connections to avoid overwhelming GitHub's servers
-CONNECTOR_LIMIT = 5
+CONNECTOR_LIMIT = 10
+# Number of star-ranges crawled concurrently
+MAX_CONCURRENT_RANGES = 3
 
 
 class CrawlerService:
@@ -48,8 +50,11 @@ class CrawlerService:
         """
         Crawls GitHub repositories by partitioning the star-count space into
         ranges of ≤1,000 results each, bypassing the GitHub search API cap.
+
+        Multiple ranges are crawled concurrently for maximum throughput.
         """
-        total_fetched = 0
+        self._total_fetched = 0
+        self._lock = asyncio.Lock()
         ranges: deque[tuple[int, int]] = deque([(INITIAL_MIN_STARS, INITIAL_MAX_STARS)])
 
         logger.info(f"Starting crawl to fetch up to {self.target_count} repositories.")
@@ -59,35 +64,39 @@ class CrawlerService:
         ) as session:
             await self.github_client.validate_token(session)
 
-            while ranges and total_fetched < self.target_count:
-                min_stars, max_stars = ranges.popleft()
-                search_query = self._build_search_query(min_stars, max_stars)
+            while ranges and self._total_fetched < self.target_count:
+                # Launch up to MAX_CONCURRENT_RANGES workers at once
+                batch: list[tuple[int, int]] = []
+                while ranges and len(batch) < MAX_CONCURRENT_RANGES:
+                    batch.append(ranges.popleft())
 
-                try:
-                    total_fetched = await self._crawl_range(
-                        session, search_query, min_stars, max_stars,
-                        total_fetched, ranges,
-                    )
-                except RateLimitExceededException as e:
-                    # Re-queue this range and wait for the rate limit to reset
-                    ranges.appendleft((min_stars, max_stars))
-                    reset_time = datetime.fromisoformat(e.reset_at.replace("Z", "+00:00"))
-                    now = datetime.now(timezone.utc)
-                    wait_seconds = max((reset_time - now).total_seconds() + 5, 1)
-                    logger.warning(f"Rate limit exceeded. Waiting {wait_seconds:.0f}s until {e.reset_at}.")
-                    await asyncio.sleep(wait_seconds)
+                tasks = [
+                    self._crawl_range(session, self._build_search_query(lo, hi), lo, hi, ranges)
+                    for lo, hi in batch
+                ]
 
-        logger.info(f"Crawling completed. Total repositories fetched: {total_fetched}.")
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for result in results:
+                    if isinstance(result, RateLimitExceededException):
+                        reset_time = datetime.fromisoformat(result.reset_at.replace("Z", "+00:00"))
+                        now = datetime.now(timezone.utc)
+                        wait_seconds = max((reset_time - now).total_seconds() + 5, 1)
+                        logger.warning(f"Rate limit exceeded. Waiting {wait_seconds:.0f}s until {result.reset_at}.")
+                        await asyncio.sleep(wait_seconds)
+                    elif isinstance(result, Exception):
+                        logger.error(f"Unexpected error in range worker: {result}")
+
+        logger.info(f"Crawling completed. Total repositories fetched: {self._total_fetched}.")
 
     async def _crawl_range(
-        self, session, search_query, min_stars, max_stars,
-        total_fetched, ranges,
-    ) -> int:
+        self, session, search_query, min_stars, max_stars, ranges,
+    ) -> None:
         """Paginate through a single star-count range, splitting if it exceeds the API cap."""
         cursor = None
         consecutive_errors = 0
 
-        while total_fetched < self.target_count:
+        while self._total_fetched < self.target_count:
             try:
                 raw_nodes, next_cursor, has_next_page, repo_count = \
                     await self.github_client.fetch_page(session, cursor, search_query)
@@ -100,36 +109,45 @@ class CrawlerService:
                             f"Range '{search_query}' has {repo_count} repos "
                             f"(>{MAX_SEARCH_RESULTS}). Splitting at {mid}."
                         )
-                        ranges.appendleft((mid + 1, max_stars))
-                        ranges.appendleft((min_stars, mid))
-                        return total_fetched
+                        async with self._lock:
+                            ranges.appendleft((mid + 1, max_stars))
+                            ranges.appendleft((min_stars, mid))
+                        return
 
                 consecutive_errors = 0
 
                 if not raw_nodes:
                     break
 
-                remaining = self.target_count - total_fetched
-                nodes_to_process = raw_nodes[:remaining]
+                async with self._lock:
+                    remaining = self.target_count - self._total_fetched
+                    if remaining <= 0:
+                        break
+                    nodes_to_process = raw_nodes[:remaining]
 
                 entities = [GitHubTranslator.to_domain(node) for node in nodes_to_process if node]
                 await self.db_repository.bulk_upsert(entities)
 
                 batch_size = len(entities)
-                total_fetched += batch_size
+                async with self._lock:
+                    self._total_fetched += batch_size
+
                 cursor = next_cursor
 
                 logger.info(
                     f"[{search_query}] Fetched {batch_size}. "
-                    f"Total: {total_fetched}/{self.target_count}."
+                    f"Total: {self._total_fetched}/{self.target_count}."
                 )
 
-                if total_fetched >= self.target_count or not has_next_page:
+                if self._total_fetched >= self.target_count or not has_next_page:
                     break
 
                 await asyncio.sleep(INTER_REQUEST_DELAY)
 
             except RateLimitExceededException:
+                # Re-queue this range so it gets retried after the wait
+                async with self._lock:
+                    ranges.appendleft((min_stars, max_stars))
                 raise
 
             except Exception as e:
@@ -140,5 +158,3 @@ class CrawlerService:
                 wait = 10 * consecutive_errors
                 logger.error(f"Error in '{search_query}': {e}. Retrying in {wait}s ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS})...")
                 await asyncio.sleep(wait)
-
-        return total_fetched

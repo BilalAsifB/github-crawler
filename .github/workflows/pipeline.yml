@@ -65,7 +65,7 @@ jobs:
         run: |
           psql -h localhost -U postgres -d github_crawler -c "\COPY (SELECT * FROM github_repositories) TO 'repositories_dump.csv' WITH CSV HEADER;"
 
-      - name: Uplaod Crawler Artifact
+      - name: Upload Crawler Artifact
         uses: actions/upload-artifact@v4
         with:
           name: github-stars-data
