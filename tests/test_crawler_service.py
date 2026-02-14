@@ -9,6 +9,9 @@ class _FakeGitHubClient:
         self.pages = pages
         self.calls = 0
 
+    async def validate_token(self, session):
+        pass
+
     async def fetch_page(self, session, cursor=None, search_query="", page_size=50):
         if self.calls >= len(self.pages):
             return [], None, False, 0
@@ -81,6 +84,9 @@ class TestCrawlerService(unittest.IsolatedAsyncioTestCase):
         class _SplittingClient:
             def __init__(self):
                 self.queries = []
+
+            async def validate_token(self, session):
+                pass
 
             async def fetch_page(self, session, cursor=None, search_query="", page_size=50):
                 self.queries.append(search_query)

@@ -57,6 +57,8 @@ class CrawlerService:
         async with aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(limit=CONNECTOR_LIMIT),
         ) as session:
+            await self.github_client.validate_token(session)
+
             while ranges and total_fetched < self.target_count:
                 min_stars, max_stars = ranges.popleft()
                 search_query = self._build_search_query(min_stars, max_stars)

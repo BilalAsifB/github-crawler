@@ -61,6 +61,20 @@ class GitHubGraphQLClient:
         }
         self.api_url = "https://api.github.com/graphql"
 
+    async def validate_token(self, session: aiohttp.ClientSession) -> None:
+        """Verify the token works before starting a long crawl."""
+        payload = {"query": "{ viewer { login } rateLimit { remaining resetAt } }"}
+        async with session.post(self.api_url, json=payload, headers=self.headers, timeout=REQUEST_TIMEOUT) as response:
+            body = await response.json()
+            if response.status != 200 or 'errors' in body:
+                raise RuntimeError(
+                    f"GitHub token validation failed (HTTP {response.status}): {body}. "
+                    "Ensure GITHUB_TOKEN is a valid Personal Access Token."
+                )
+            viewer = body.get('data', {}).get('viewer', {}).get('login')
+            rate = body.get('data', {}).get('rateLimit', {})
+            logger.info(f"Authenticated as '{viewer}'. Rate limit remaining: {rate.get('remaining')}")
+
     async def fetch_page(
         self,
         session: aiohttp.ClientSession,
@@ -85,18 +99,26 @@ class GitHubGraphQLClient:
             async with session.post(self.api_url, json=payload, headers=self.headers, timeout=REQUEST_TIMEOUT) as response:
                 # Handle secondary rate limit (abuse detection)
                 if response.status == 403:
+                  body = await response.text()
                   retry_after = response.headers.get('Retry-After')
                   sleep_time = int(retry_after) if retry_after else 60
-                  logger.warning(f"Secondary rate limit (403). Sleeping {sleep_time}s...")
+                  logger.warning(f"Secondary rate limit (403). Body: {body[:200]}. Sleeping {sleep_time}s...")
                   await asyncio.sleep(sleep_time)
                   continue
 
                 if response.status in {500, 502, 503, 504}:
-                  # Reduce page size on server errors — large pages cause GitHub timeouts
+                  body = await response.text()
+                  # Check if this is actually a rate limit error disguised as 5xx
+                  remaining_header = response.headers.get('x-ratelimit-remaining')
+                  if remaining_header == '0':
+                      reset_header = response.headers.get('x-ratelimit-reset', '')
+                      from datetime import datetime, timezone
+                      reset_at = datetime.fromtimestamp(int(reset_header), tz=timezone.utc).isoformat() if reset_header else 'unknown'
+                      raise RateLimitExceededException(reset_at=reset_at)
                   current_page_size = max(current_page_size // 2, MIN_PAGE_SIZE)
                   sleep_time = (2 ** attempt) + random.uniform(0, 2)
                   logger.warning(
-                      f"Server error ({response.status}). "
+                      f"Server error ({response.status}). Body: {body[:200]}. "
                       f"Reducing page size to {current_page_size}, "
                       f"retrying in {sleep_time:.1f}s (attempt {attempt + 1}/{MAX_RETRIES})..."
                   )
