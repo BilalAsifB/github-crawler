@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 MAX_SEARCH_RESULTS = 1_000
 INITIAL_MIN_STARS = 10
 INITIAL_MAX_STARS = 1_000_000
-INTER_REQUEST_DELAY = 2.0  # Seconds between requests to avoid secondary rate limits
+INTER_REQUEST_DELAY = 1.0  # Seconds between requests to avoid secondary rate limits
 MAX_CONSECUTIVE_ERRORS = 5
 # Limit concurrent connections to avoid overwhelming GitHub's servers
 CONNECTOR_LIMIT = 5
